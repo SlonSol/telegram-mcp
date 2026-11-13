@@ -229,8 +229,11 @@ async def _serve(transport: str) -> None:
     "sse" is kept for clients that only support the legacy SSE transport.
     """
     if transport in ("http", "sse"):
+        from telegram_mcp.transport.auth import require_auth_token
+
         mcp.settings.host = os.getenv("MCP_HOST", "127.0.0.1")
         mcp.settings.port = int(os.getenv("MCP_PORT", "8765"))
+        require_auth_token(mcp.settings.host)
         _configure_transport_security()
         if transport == "http":
             await mcp.run_streamable_http_async()
@@ -276,6 +279,8 @@ async def _main() -> None:
 
         asyncio.create_task(_warm_caches())
 
+        from telegram_mcp.archive.collector import start_archive
+
         transport = os.getenv("MCP_TRANSPORT", "stdio").lower()
 
         # Validate transport mode
@@ -303,6 +308,7 @@ async def _main() -> None:
                 file=sys.stderr,
             )
 
+        print(start_archive(clients), file=sys.stderr)
         await _serve(transport)
     except Exception as e:
         print(f"Error starting client: {e}", file=sys.stderr)
@@ -355,6 +361,15 @@ def main() -> None:
     # send_file is not exposed is a valid configuration, so the name check
     # has to see the full tool set.
     _runtime._apply_file_extension_overrides()
+    from telegram_mcp.hard_readonly import hard_readonly_enabled
+
+    if hard_readonly_enabled():
+        print(
+            "TELEGRAM_HARD_READONLY is on: mutating tools stay unregistered and "
+            "Telegram requests that send, edit, delete, react, mark read, view "
+            "stories, or change settings are refused. A '+' write-tool list is ignored.",
+            file=sys.stderr,
+        )
     hidden, excluded = _runtime._apply_exposed_tools_mode()
     if hidden:
         # These names are the menu for the "+" allowlist; without this line the

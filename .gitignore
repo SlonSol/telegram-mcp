@@ -194,6 +194,9 @@ mcp_errors.log
 telegram_test.log
 test_issues_report.md
 
+# Local runtime data: session files, deleted-message archive, saved media
+data/
+
 # Temporary data files
 test_upload.txt
 test_voice.ogg

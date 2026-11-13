@@ -199,7 +199,13 @@ def engine_config_error(engine: str) -> Optional[str]:
     """Why ``engine`` cannot run with the current settings, or None.
 
     Checked before any download, so a misconfigured engine costs nothing.
+    Hard read-only mode refuses Groq and OpenAI here, before any upload.
     """
+    from telegram_mcp.hard_readonly import third_party_upload_blocked
+
+    blocked = third_party_upload_blocked(engine)
+    if blocked:
+        return blocked
     if engine == "groq" and not os.getenv("GROQ_API_KEY"):
         return (
             "GROQ_API_KEY is not configured on this server. "
@@ -629,6 +635,9 @@ async def transcribe(cl, entity, msg, engine: str) -> dict:
     {"status": "pending"} | {"status": "premium_required"} |
     {"status": "error", "error": ...}
     """
+    blocked = engine_config_error(engine) if engine in {"groq", "openai"} else None
+    if blocked and blocked.startswith("TELEGRAM_HARD_READONLY"):
+        return {"status": "error", "error": blocked}
     if engine == "telegram":
         return await _transcribe_via_telegram(cl, entity, msg)
     if engine == "groq":
@@ -784,8 +793,13 @@ async def prefetch_transcripts(cl, entity, chat_id: int, messages) -> None:
     """
     if transcribe_mode() != "auto":
         return
-    budget = TranscribeBudget()
     engine = default_engine()
+    from telegram_mcp.hard_readonly import third_party_upload_blocked
+
+    if third_party_upload_blocked(engine):
+        # Do not download a voice note we are not allowed to upload.
+        return
+    budget = TranscribeBudget()
     for msg in messages:
         if not is_transcribable(msg):
             continue

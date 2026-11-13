@@ -10,8 +10,14 @@ services:
     environment:
       MCP_TRANSPORT: http
       MCP_HOST: 0.0.0.0
+      TELEGRAM_HARD_READONLY: "1"
+      TELEGRAM_EXPOSED_TOOLS: read-only
+      TELEGRAM_DATA_DIR: /app/data
+      TELEGRAM_ARCHIVE_MEDIA: photos
+      TELEGRAM_TRANSCRIPT_CACHE_DIR: /app/data/transcripts
+      TELEGRAM_SESSION_NAME: /app/data/telegram_session
     ports:
       - "127.0.0.1:8765:8765"
     volumes:
-      - ../../transcript_cache:/app/data/transcripts
+      - ../../data:/app/data
     restart: unless-stopped

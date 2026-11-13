@@ -9,7 +9,12 @@ services:
       - ../../.env
     environment:
       MCP_TRANSPORT: stdio
+      TELEGRAM_HARD_READONLY: "1"
+      TELEGRAM_DATA_DIR: /app/data
+      TELEGRAM_ARCHIVE_MEDIA: photos
+      TELEGRAM_TRANSCRIPT_CACHE_DIR: /app/data/transcripts
+      TELEGRAM_SESSION_NAME: /app/data/telegram_session
     stdin_open: true
     tty: false
     volumes:
-      - ../../transcript_cache:/app/data/transcripts
+      - ../../data:/app/data

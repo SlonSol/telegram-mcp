@@ -8,7 +8,7 @@ Depending on your client setup and workload, choose one of two deployment archit
 
 | Mode | Transport | Best For | Pros | Considerations |
 | :--- | :--- | :--- | :--- | :--- |
-| **Shared Server** *(Recommended)* | Streamable HTTP (`MCP_TRANSPORT=http`) | Multiple clients, subagent teams, persistent servers | Single long-lived connection, avoids Telegram session rate-limits, shared transcript cache | Binds to localhost only (unauthenticated HTTP) |
+| **Shared Server** *(Recommended)* | Streamable HTTP (`MCP_TRANSPORT=http`) | Multiple clients, subagent teams, persistent servers | Single long-lived connection, avoids Telegram session rate-limits, shared transcript cache | Set `MCP_AUTH_TOKEN`; the server refuses a non-localhost bind without it |
 | **Per-Client Stdio** | Stdio (`MCP_TRANSPORT=stdio`) | Single CLI tool, isolated one-shot execution | Isolated ephemeral container lifecycle | Spawns a container per client session; not recommended for multi-agent suites |
 
 ---
@@ -23,11 +23,12 @@ Depending on your client setup and workload, choose one of two deployment archit
    # Set TELEGRAM_API_ID, TELEGRAM_API_HASH, and TELEGRAM_SESSION_STRING
    ```
 
-2. Ensure the transcript cache directory exists and has correct ownership for the non-root `appuser` (UID 1000):
+2. Ensure the data directory exists and is writable by the non-root `appuser` (UID 1000). It holds the session file, the deleted-message archive and the transcript cache:
    ```bash
-   mkdir -p ./transcript_cache
-   chown -R 1000:1000 ./transcript_cache  # On Linux/macOS
+   mkdir -p ./data
+   chown -R 1000:1000 ./data  # On Linux/macOS
    ```
+   Put `MCP_AUTH_TOKEN` in `.env` as well. Compose binds `0.0.0.0` inside the container, and the server will not start on that address without the token.
 
 3. Start the shared service:
    ```bash

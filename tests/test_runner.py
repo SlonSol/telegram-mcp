@@ -376,6 +376,7 @@ async def test_serve_http_transports_bind_host_and_port(monkeypatch, transport):
     monkeypatch.setattr(runner, "mcp", fake)
     monkeypatch.setenv("MCP_HOST", "0.0.0.0")
     monkeypatch.setenv("MCP_PORT", "9000")
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "test-token")
 
     await runner._serve(transport)
 
@@ -409,6 +410,7 @@ async def test_serve_http_enables_localhost_only_protection_by_default(monkeypat
     fake = _FakeMcp()
     monkeypatch.setattr(runner, "mcp", fake)
     monkeypatch.setenv("MCP_HOST", host)
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "test-token")
     monkeypatch.delenv("MCP_ALLOWED_HOSTS", raising=False)
     monkeypatch.delenv("MCP_ALLOWED_ORIGINS", raising=False)
 

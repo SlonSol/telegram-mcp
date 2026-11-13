@@ -416,8 +416,10 @@ def _apply_exposed_tools_mode(
     server: FastMCP = mcp, mode: Optional[str] = None
 ) -> _ExposedToolsResult:
     """Prune registered MCP tools according to the configured exposure mode."""
+    from telegram_mcp.hard_readonly import forced_exposure, hard_readonly_enabled
+
     selected = _parse_exposed_tools_mode(mode)
-    if selected.base == "all" and not selected.exclusions:
+    if selected.base == "all" and not selected.exclusions and not hard_readonly_enabled():
         return _ExposedToolsResult([], [])
 
     tools = list(server._tool_manager.list_tools())
@@ -428,6 +430,15 @@ def _apply_exposed_tools_mode(
     _reject_unknown_exposed_tools("allowlist", selected.allowlist, registered, hint)
     _reject_unknown_exposed_tools("exclusion list", selected.exclusions, registered)
 
+    readonly_names = {
+        tool.name
+        for tool in tools
+        if bool(getattr(getattr(tool, "annotations", None), "readOnlyHint", False))
+    }
+    base, allowlist, exclusion_list = forced_exposure(
+        selected.base, selected.allowlist, selected.exclusions, readonly_names
+    )
+    selected = _ExposedToolsMode(base, allowlist, exclusion_list)
     allowed = set(selected.allowlist)
     excluded = set(selected.exclusions)
 
@@ -736,7 +747,10 @@ def _build_client(session: Any, label: str) -> TelegramClient:
     # Read flood sleep threshold dynamically so runtime env changes take effect
     kwargs["flood_sleep_threshold"] = _get_flood_sleep_threshold()
     kwargs.update(client_identity_kwargs())
-    return TelegramClient(session, TELEGRAM_API_ID, TELEGRAM_API_HASH, **kwargs)
+    client = TelegramClient(session, TELEGRAM_API_ID, TELEGRAM_API_HASH, **kwargs)
+    from telegram_mcp.hard_readonly import install_client_guard
+
+    return install_client_guard(client)
 
 
 # --- Session pool ------------------------------------------------------------
