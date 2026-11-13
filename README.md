@@ -9,6 +9,8 @@
 
 A Telegram integration for Claude, Cursor, and other MCP-compatible clients. It exposes Telegram account, chat, message, contact, media, folder, and admin operations through the [Model Context Protocol](https://modelcontextprotocol.io/) using [Telethon](https://docs.telethon.dev/).
 
+**This fork** stays read-only (`TELEGRAM_HARD_READONLY`, on unless set to `0`) and keeps a local archive of messages so deleted ones can still be read. Setup for a small Google Cloud VM is in [DEPLOY.md](DEPLOY.md).
+
 ## 🤖 MCP in Action
 
 Basic Telegram MCP usage in Claude:
@@ -370,6 +372,11 @@ normal authority inside the server process; read-only mode only prevents
 non-read-only tools from being registered and exposed through MCP. Accepted
 values are `all` (the default), `read-only`, and `read-only+<tool>,<tool>`,
 each optionally followed by `-<tool>,<tool>`.
+
+This fork adds `TELEGRAM_HARD_READONLY` (on unless set to `0`). While it is
+on, a `+` write-tool list is ignored and the Telethon client refuses requests
+that send, edit, delete, react, mark anything read, view stories, or change
+the profile. See [DEPLOY.md](DEPLOY.md).
 
 A separate, hardcoded allowlist restricts `send_voice`, `send_sticker`,
 `set_profile_photo`, and `edit_chat_photo` to their expected file extensions;
@@ -924,9 +931,10 @@ docker run -d --name telegram-mcp --restart unless-stopped \
   telegram-mcp:latest
 ```
 
-`MCP_HOST=0.0.0.0` binds inside the container so the published port works;
-`-p 127.0.0.1:8765:8765` keeps the server reachable only from the local
-machine — the endpoint is unauthenticated, so never publish it on a public
+`MCP_HOST=0.0.0.0` binds inside the container so the published port works.
+That bind is not localhost, so set `MCP_AUTH_TOKEN` in `.env`; the server
+refuses to start without it. Send `Authorization: Bearer <token>` from the
+MCP client. `-p 127.0.0.1:8765:8765` still keeps the port off the public
 interface.
 
 The bundled Compose file runs the same setup:

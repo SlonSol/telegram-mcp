@@ -206,17 +206,19 @@ def patch_fastmcp_streamable_http() -> None:
     try:
         from mcp.server.fastmcp import FastMCP
 
-        if getattr(FastMCP, "_protocol_negotiation_patched", False):
-            return
+        if not getattr(FastMCP, "_protocol_negotiation_patched", False):
+            original_streamable_http_app = FastMCP.streamable_http_app
 
-        original_streamable_http_app = FastMCP.streamable_http_app
+            def wrapped_streamable_http_app(self: Any, *args: Any, **kwargs: Any) -> Any:
+                app = original_streamable_http_app(self, *args, **kwargs)
+                return ProtocolNegotiationMiddleware(app, self)
 
-        def wrapped_streamable_http_app(self: Any, *args: Any, **kwargs: Any) -> Any:
-            app = original_streamable_http_app(self, *args, **kwargs)
-            return ProtocolNegotiationMiddleware(app, self)
+            FastMCP.streamable_http_app = wrapped_streamable_http_app  # type: ignore[assignment]
+            FastMCP._protocol_negotiation_patched = True  # type: ignore[attr-defined]
 
-        FastMCP.streamable_http_app = wrapped_streamable_http_app  # type: ignore[assignment]
-        FastMCP._protocol_negotiation_patched = True  # type: ignore[attr-defined]
+        from telegram_mcp.transport.auth import install_bearer_auth
+
+        install_bearer_auth()
     except (ImportError, AttributeError) as exc:
         logger.debug("Could not monkey-patch FastMCP.streamable_http_app: %s", exc)
 
@@ -232,11 +234,27 @@ def create_streamable_http_app(mcp_instance: Any) -> Any:
     if session_mgr is not None and getattr(session_mgr, "_has_started", False):
         mcp_instance._session_manager = None
 
+    from telegram_mcp.transport.auth import BearerAuthMiddleware
+
     app = mcp_instance.streamable_http_app()
-    # If not already wrapped via monkeypatch
-    if not isinstance(app, ProtocolNegotiationMiddleware):
+    # The FastMCP methods are wrapped on import. Cover the case where that
+    # patch did not run, without wrapping a second time.
+    if not _chain_has(app, ProtocolNegotiationMiddleware):
         app = ProtocolNegotiationMiddleware(app, mcp_instance)
+    if not _chain_has(app, BearerAuthMiddleware):
+        app = BearerAuthMiddleware(app)
     return app
+
+
+def _chain_has(app: Any, kind: type) -> bool:
+    seen: set[int] = set()
+    current = app
+    while current is not None and id(current) not in seen:
+        if isinstance(current, kind):
+            return True
+        seen.add(id(current))
+        current = getattr(current, "app", None)
+    return False
 
 
 async def run_streamable_http_async(mcp_instance: Any) -> None:

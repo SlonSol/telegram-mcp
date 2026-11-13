@@ -16,7 +16,17 @@ services:
     environment:
       MCP_TRANSPORT: http
       MCP_HOST: 0.0.0.0
-    # The endpoint is unauthenticated — publish on localhost only.
+      # This fork refuses to send, edit, delete or mark anything read.
+      TELEGRAM_HARD_READONLY: "1"
+      TELEGRAM_EXPOSED_TOOLS: read-only
+      TELEGRAM_DATA_DIR: /app/data
+      TELEGRAM_ARCHIVE_MEDIA: photos
+      TELEGRAM_TRANSCRIPT_CACHE_DIR: /app/data/transcripts
+      # File session on the data volume. A TELEGRAM_SESSION_STRING in .env
+      # still wins until you remove it (see DEPLOY.md).
+      TELEGRAM_SESSION_NAME: /app/data/telegram_session
+    # Inside the container the server binds 0.0.0.0, so MCP_AUTH_TOKEN in
+    # .env is required. Publish on localhost only as well.
     ports:
       - "127.0.0.1:8765:8765"
     # Optional: Uncomment the following lines to mount a local directory
@@ -25,12 +35,8 @@ services:
     # volumes:
     #   - ./telegram_sessions:/app
     volumes:
-      # Voice/video-note transcript cache (SQLite, see telegram_mcp/transcription.py).
-      # Without this mount the cache lives only in the container's writable
-      # layer and is lost on every `docker compose build`. It holds plaintext
-      # personal-chat transcripts, so this directory should get its own
-      # backup/retention policy rather than riding along with a general backup.
-      # Host directory must be readable/writable by uid 1000 (appuser):
-      #   mkdir -p ./transcript_cache && chown 1000:1000 ./transcript_cache
-      - ./transcript_cache:/app/data/transcripts
+      # Session file, deleted-message archive and transcript cache.
+      # Host directory must be writable by uid 1000 (appuser):
+      #   mkdir -p ./data && sudo chown -R 1000:1000 ./data
+      - ./data:/app/data
     restart: unless-stopped
