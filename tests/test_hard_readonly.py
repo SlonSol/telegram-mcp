@@ -71,6 +71,11 @@ _MUST_DENY = [
     "account.SetPrivacyRequest",
     "photos.UploadProfilePhotoRequest",
     "photos.DeletePhotosRequest",
+    "messages.GetInlineBotResultsRequest",
+    "messages.GetWebPagePreviewRequest",
+    "channels.SearchPostsRequest",
+    "messages.GetBotAppRequest",
+    "messages.GetAttachMenuBotRequest",
 ]
 
 _MUST_ALLOW = [

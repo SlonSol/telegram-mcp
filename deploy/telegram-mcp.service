@@ -1,0 +1,48 @@
+[Unit]
+Description=Telegram MCP (read-only)
+Documentation=file:///opt/telegram-mcp/DEPLOY.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=telegram-mcp
+Group=telegram-mcp
+WorkingDirectory=/opt/telegram-mcp
+Environment=MCP_TRANSPORT=http
+Environment=MCP_HOST=127.0.0.1
+Environment=MCP_PORT=8765
+Environment=TELEGRAM_HARD_READONLY=1
+EnvironmentFile=/etc/telegram-mcp.env
+ExecStart=/opt/telegram-mcp/venv/bin/python /opt/telegram-mcp/main.py
+Restart=on-failure
+RestartSec=5
+# Do not start this unit until API credentials and a session file are in place.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/telegram-mcp/data
+LockPersonality=yes
+RestrictSUIDSGID=yes
+UMask=0077
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=700M
+
+[Install]
+WantedBy=multi-user.target
