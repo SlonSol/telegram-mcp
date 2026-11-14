@@ -30,4 +30,8 @@ def client_identity_kwargs() -> dict:
         value = os.environ.get(env_var)
         if value:
             kwargs[kwarg] = value
+    # IPv6-only hosts (e.g. a GCP VM without external IPv4) need Telethon to
+    # use Telegram's IPv6 datacenter addresses.
+    if os.environ.get("TELEGRAM_USE_IPV6", "").strip().lower() in ("1", "true", "yes", "on"):
+        kwargs["use_ipv6"] = True
     return kwargs

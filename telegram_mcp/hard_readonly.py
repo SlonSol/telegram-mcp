@@ -80,6 +80,15 @@ _EXPLICIT_DENY = frozenset(
         "GetStoriesViewsRequest",
         "GetAllStoriesRequest",
         "GetAllReadPeerStoriesRequest",
+        # Getters that reach a third party or can spend Stars: an inline bot
+        # sees the query and the user, a web page preview makes Telegram fetch
+        # the URL, channels.searchPosts may charge Stars, and bot app / attach
+        # menu lookups tell the bot about the user.
+        "GetInlineBotResultsRequest",
+        "GetWebPagePreviewRequest",
+        "SearchPostsRequest",
+        "GetBotAppRequest",
+        "GetAttachMenuBotRequest",
     }
 )
 
