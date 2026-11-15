@@ -65,6 +65,8 @@ def _present(row: dict) -> dict:
         "text": _clean(row.get("text")),
         "media_type": row.get("media_type") or "",
         "media_saved": bool(row.get("media_saved")),
+        "is_ephemeral": bool(row.get("is_ephemeral")),
+        "ttl_seconds": row.get("ttl_seconds"),
         "reply_to_msg_id": row.get("reply_to_msg_id"),
         "forward": forward,
         "deleted": bool(row.get("deleted")),

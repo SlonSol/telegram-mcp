@@ -12,6 +12,7 @@ disk. HTTP mode is a long-running process and keeps capturing.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from datetime import datetime, timezone
@@ -19,6 +20,7 @@ from typing import Any, Optional
 
 from telethon import events
 
+from telegram_mcp.archive.notifier import get_notifier
 from telegram_mcp.archive.store import ArchiveStore, open_store
 
 _MEDIA_ATTRS = (
@@ -163,6 +165,17 @@ def _forward(message: Any) -> Optional[str]:
     return json.dumps(payload, ensure_ascii=False)
 
 
+def ephemeral_info(message: Any) -> tuple[int, Optional[int]]:
+    """Detect view-once or disappearing message TTL."""
+    media = getattr(message, "media", None)
+    ttl = getattr(media, "ttl_seconds", None) if media else None
+    if ttl is None:
+        ttl = getattr(message, "ttl_period", None)
+    view_once = bool(getattr(media, "view_once", False))
+    is_eph = 1 if (ttl is not None or view_once) else 0
+    return is_eph, ttl
+
+
 def snapshot(message: Any, account: str) -> Optional[dict[str, Any]]:
     """Fields we persist, or None when the update has no chat and message id."""
     chat_id = getattr(message, "chat_id", None)
@@ -173,6 +186,7 @@ def snapshot(message: Any, account: str) -> Optional[dict[str, Any]]:
     text = getattr(message, "message", None)
     if text is None:
         text = getattr(message, "text", None) or ""
+    is_eph, ttl = ephemeral_info(message)
     return {
         "account": account,
         "chat_id": int(chat_id),
@@ -186,6 +200,8 @@ def snapshot(message: Any, account: str) -> Optional[dict[str, Any]]:
         "media_type": media_kind(message),
         "reply_to_msg_id": getattr(reply, "reply_to_msg_id", None) if reply else None,
         "forward_json": _forward(message),
+        "is_ephemeral": is_eph,
+        "ttl_seconds": ttl,
     }
 
 
@@ -213,8 +229,23 @@ async def _remember(
     snap = snapshot(message, account)
     if snap is None:
         return
+    old_text = None
+    if source == "edit":
+        existing = store.edit_history(account, snap["chat_id"], snap["message_id"])
+        if existing and existing.get("message"):
+            old_text = existing["message"].get("text") or ""
     media = await _maybe_download(client, store, message)
     store.upsert(snap, source=source, media=media)
+
+    notifier = get_notifier()
+    if notifier.active:
+        if source == "edit" and old_text is not None and old_text != (snap.get("text") or ""):
+            asyncio.create_task(notifier.notify_edit(snap, old_text, snap.get("text") or ""))
+        elif snap.get("is_ephemeral") and media:
+            channel_id = snap["chat_id"] if snap["peer_type"] == "channel" else None
+            saved = store.get_messages_for_delete(account, [snap["message_id"]], channel_chat_id=channel_id)
+            media_path = saved[0].get("media_path") if saved else None
+            asyncio.create_task(notifier.notify_ephemeral(snap, media_path, snap.get("ttl_seconds")))
 
 
 def attach(client: Any, store: ArchiveStore, account: str) -> bool:
@@ -232,9 +263,18 @@ def attach(client: Any, store: ArchiveStore, account: str) -> bool:
     async def on_delete(event: Any) -> None:
         ids = [int(item) for item in (getattr(event, "deleted_ids", None) or [])]
         chat_id = getattr(event, "chat_id", None)
-        # No chat id: private chats and basic groups (account-wide message ids).
-        # A chat id: channel or supergroup.
-        store.mark_deleted(account, ids, channel_chat_id=None if chat_id is None else int(chat_id))
+        channel_chat_id = None if chat_id is None else int(chat_id)
+        deleted_rows = store.get_messages_for_delete(account, ids, channel_chat_id=channel_chat_id)
+        store.mark_deleted(account, ids, channel_chat_id=channel_chat_id)
+
+        notifier = get_notifier()
+        if notifier.active and deleted_rows:
+            chat_name = deleted_rows[0].get("chat_title") or str(chat_id or "чат")
+            if len(deleted_rows) <= 3:
+                for r in deleted_rows:
+                    asyncio.create_task(notifier.notify_delete_single(r))
+            else:
+                asyncio.create_task(notifier.notify_delete_bulk(chat_name, chat_id, deleted_rows, len(ids)))
 
     add(on_new, events.NewMessage())
     add(on_edit, events.MessageEdited())

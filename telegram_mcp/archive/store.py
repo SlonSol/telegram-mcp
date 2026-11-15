@@ -17,10 +17,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-_DEFAULT_MEDIA_MODE = "photos"
+_DEFAULT_MEDIA_MODE = "all"
 _MEDIA_MODES = {"off", "photos", "all"}
-_DEFAULT_MAX_FILE_BYTES = 1_500_000
-_DEFAULT_TOTAL_BYTES = 512 * 1024 * 1024
+_DEFAULT_MAX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB
+_DEFAULT_TOTAL_BYTES = 15 * 1024 * 1024 * 1024  # 15 GB
 
 _store_lock = threading.Lock()
 _store: Optional["ArchiveStore"] = None
@@ -136,12 +136,16 @@ class ArchiveStore:
                 deleted_at TEXT,
                 first_seen_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
+                is_ephemeral INTEGER NOT NULL DEFAULT 0,
+                ttl_seconds INTEGER,
                 UNIQUE(account, chat_id, message_id)
             );
             CREATE INDEX IF NOT EXISTS idx_messages_deleted
                 ON messages(account, deleted, deleted_at);
             CREATE INDEX IF NOT EXISTS idx_messages_lookup
                 ON messages(account, message_id, peer_type);
+            CREATE INDEX IF NOT EXISTS idx_messages_ephemeral
+                ON messages(account, is_ephemeral);
             CREATE TABLE IF NOT EXISTS edits (
                 id INTEGER PRIMARY KEY,
                 message_row INTEGER NOT NULL,
@@ -151,6 +155,11 @@ class ArchiveStore:
             );
             CREATE INDEX IF NOT EXISTS idx_edits_message ON edits(message_row, id);
             """)
+            cols = {row[1] for row in self._conn.execute("PRAGMA table_info(messages)").fetchall()}
+            if "is_ephemeral" not in cols:
+                self._conn.execute("ALTER TABLE messages ADD COLUMN is_ephemeral INTEGER NOT NULL DEFAULT 0")
+            if "ttl_seconds" not in cols:
+                self._conn.execute("ALTER TABLE messages ADD COLUMN ttl_seconds INTEGER")
         self._conn.commit()
 
     def wants_media(self, media_kind: str, size: Optional[int]) -> bool:
@@ -301,10 +310,14 @@ class ArchiveStore:
                 "WHERE media_path IS NOT NULL" + (" AND account = ?" if account else ""),
                 params,
             ).fetchone()
+            eph_sql = f"SELECT COUNT(*) FROM messages{clause}"
+            eph_sql += " AND is_ephemeral = 1" if clause else " WHERE is_ephemeral = 1"
+            ephemeral = self._conn.execute(eph_sql, params).fetchone()
         return {
             "messages": int(messages[0]),
             "deleted": int(deleted[0]),
             "edits": int(edits[0]),
+            "ephemeral": int(ephemeral[0]),
             "media_files": int(media[0]),
             "media_bytes": int(media[1]),
             "media_mode": self.mode,
@@ -331,14 +344,16 @@ class ArchiveStore:
 
     def _insert(self, snap: dict[str, Any], now: str, media: Optional[bytes]) -> int:
         path, size = self._store_media(snap, media)
+        is_ephemeral = 1 if snap.get("is_ephemeral") else 0
+        ttl_seconds = snap.get("ttl_seconds")
         cur = self._conn.execute(
             """
             INSERT INTO messages (
                 account, chat_id, peer_type, chat_title, sender_id, sender_name,
                 sender_name_cf, message_id, date, text, text_cf, media_type,
                 media_path, media_bytes, reply_to_msg_id, forward_json, deleted,
-                deleted_at, first_seen_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)
+                deleted_at, first_seen_at, updated_at, is_ephemeral, ttl_seconds
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, ?)
             """,
             (
                 snap["account"],
@@ -359,6 +374,8 @@ class ArchiveStore:
                 snap.get("forward_json"),
                 now,
                 now,
+                is_ephemeral,
+                ttl_seconds,
             ),
         )
         self._conn.commit()
@@ -393,6 +410,8 @@ class ArchiveStore:
         if source == "new":
             deleted = 0
             deleted_at = None
+        is_ephemeral = 1 if snap.get("is_ephemeral") else int(row["is_ephemeral"] or 0)
+        ttl_seconds = snap.get("ttl_seconds") if snap.get("ttl_seconds") is not None else row["ttl_seconds"]
         self._conn.execute(
             """
             UPDATE messages SET
@@ -405,7 +424,8 @@ class ArchiveStore:
                 media_path = ?, media_bytes = ?,
                 reply_to_msg_id = COALESCE(?, reply_to_msg_id),
                 forward_json = COALESCE(?, forward_json),
-                deleted = ?, deleted_at = ?, updated_at = ?
+                deleted = ?, deleted_at = ?, updated_at = ?,
+                is_ephemeral = ?, ttl_seconds = ?
             WHERE id = ?
             """,
             (
@@ -425,6 +445,8 @@ class ArchiveStore:
                 deleted,
                 deleted_at,
                 now,
+                is_ephemeral,
+                ttl_seconds,
                 row["id"],
             ),
         )
@@ -471,13 +493,14 @@ class ArchiveStore:
         return str(path), len(media)
 
     def _prune_media(self) -> None:
-        """Drop oldest media files until the cap fits. Text rows stay."""
+        """Drop oldest media files until the cap fits. Ephemeral files are protected first."""
         total = self._media_total()
         if total <= self.total_bytes:
             return
+        # Phase 1: Prune regular non-ephemeral files first (oldest first)
         rows = self._conn.execute("""
             SELECT id, media_path, media_bytes FROM messages
-            WHERE media_path IS NOT NULL
+            WHERE media_path IS NOT NULL AND is_ephemeral = 0
             ORDER BY date ASC, id ASC
             """).fetchall()
         for row in rows:
@@ -489,7 +512,45 @@ class ArchiveStore:
                 "UPDATE messages SET media_path = NULL, media_bytes = 0 WHERE id = ?",
                 (row["id"],),
             )
+        # Phase 2: If still over budget, prune ephemeral files
+        if total > self.total_bytes:
+            rows_eph = self._conn.execute("""
+                SELECT id, media_path, media_bytes FROM messages
+                WHERE media_path IS NOT NULL
+                ORDER BY date ASC, id ASC
+                """).fetchall()
+            for row in rows_eph:
+                if total <= self.total_bytes:
+                    break
+                self._delete_file(row["media_path"])
+                total -= int(row["media_bytes"] or 0)
+                self._conn.execute(
+                    "UPDATE messages SET media_path = NULL, media_bytes = 0 WHERE id = ?",
+                    (row["id"],),
+                )
         self._conn.commit()
+
+    def get_messages_for_delete(
+        self,
+        account: str,
+        message_ids: list[int],
+        *,
+        channel_chat_id: Optional[int] = None,
+    ) -> list[dict[str, Any]]:
+        if not message_ids:
+            return []
+        marks = ",".join("?" for _ in message_ids)
+        params: list[Any] = [account]
+        if channel_chat_id is None:
+            sql = f"SELECT * FROM messages WHERE account = ? AND message_id IN ({marks}) AND peer_type IN ('user', 'chat')"
+            params.extend(message_ids)
+        else:
+            sql = f"SELECT * FROM messages WHERE account = ? AND chat_id = ? AND message_id IN ({marks}) AND peer_type = 'channel'"
+            params.append(channel_chat_id)
+            params.extend(message_ids)
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return [self._public_row(row) for row in rows]
 
     def _media_total(self) -> int:
         row = self._conn.execute(
@@ -531,6 +592,7 @@ class ArchiveStore:
         edits = self._conn.execute(
             "SELECT COUNT(*) FROM edits WHERE message_row = ?", (row["id"],)
         ).fetchone()
+        keys = row.keys() if hasattr(row, "keys") else ()
         return {
             "account": row["account"],
             "chat_id": row["chat_id"],
@@ -543,6 +605,9 @@ class ArchiveStore:
             "text": row["text"],
             "media_type": row["media_type"] or "",
             "media_saved": bool(row["media_path"]),
+            "media_path": row["media_path"] if "media_path" in keys else None,
+            "is_ephemeral": bool(row["is_ephemeral"]) if "is_ephemeral" in keys else False,
+            "ttl_seconds": row["ttl_seconds"] if "ttl_seconds" in keys else None,
             "reply_to_msg_id": row["reply_to_msg_id"],
             "forward": forward,
             "deleted": bool(row["deleted"]),
@@ -581,6 +646,8 @@ def _suffix(media_type: str) -> str:
         "video_note": ".mp4",
         "audio": ".mp3",
         "gif": ".mp4",
+        "sticker": ".webp",
+        "document": ".bin",
     }.get(media_type, ".bin")
 
 

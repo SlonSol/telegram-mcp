@@ -316,3 +316,35 @@ async def test_archive_tools_read_the_database_only(monkeypatch, store):
 @pytest.mark.asyncio
 async def test_search_archive_requires_a_query():
     assert "query" in await search_archive(query="  ")
+
+
+def test_ephemeral_flags_and_stats(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_ARCHIVE_MEDIA", "all")
+    monkeypatch.setenv("TELEGRAM_ARCHIVE_MEDIA_MAX_BYTES", "100")
+    monkeypatch.setenv("TELEGRAM_ARCHIVE_MEDIA_TOTAL_BYTES", "20")
+    reset_store()
+    store = open_store()
+
+    msg1 = _message(message_id=1, chat_id=1, text="regular", photo=True)
+    msg2 = _message(message_id=2, chat_id=1, text="disappearing", photo=True)
+    msg2.media = SimpleNamespace(ttl_seconds=30, view_once=True)
+
+    snap1 = snapshot(msg1, "default")
+    snap2 = snapshot(msg2, "default")
+    assert snap1["is_ephemeral"] == 0
+    assert snap2["is_ephemeral"] == 1
+    assert snap2["ttl_seconds"] == 30
+
+    store.upsert(snap1, source="new", media=b"01234567")
+    store.upsert(snap2, source="new", media=b"89abcdef")
+
+    stats = store.stats(None)
+    assert stats["ephemeral"] == 1
+    assert stats["messages"] == 2
+
+
+def test_notifier_inert_by_default():
+    from telegram_mcp.archive.notifier import get_notifier, is_enabled
+    assert is_enabled() is False
+    assert get_notifier().active is False
+
