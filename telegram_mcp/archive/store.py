@@ -153,13 +153,13 @@ class ArchiveStore:
                 media_type TEXT NOT NULL DEFAULT '',
                 recorded_at TEXT NOT NULL
             );
-            CREATE INDEX IF NOT EXISTS idx_edits_message ON edits(message_row, id);
-            """)
-            cols = {row[1] for row in self._conn.execute("PRAGMA table_info(messages)").fetchall()}
-            if "is_ephemeral" not in cols:
-                self._conn.execute("ALTER TABLE messages ADD COLUMN is_ephemeral INTEGER NOT NULL DEFAULT 0")
-            if "ttl_seconds" not in cols:
-                self._conn.execute("ALTER TABLE messages ADD COLUMN ttl_seconds INTEGER")
+        CREATE INDEX IF NOT EXISTS idx_edits_message ON edits(message_row, id);
+        """)
+        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(messages)").fetchall()}
+        if "is_ephemeral" not in cols:
+            self._conn.execute("ALTER TABLE messages ADD COLUMN is_ephemeral INTEGER NOT NULL DEFAULT 0")
+        if "ttl_seconds" not in cols:
+            self._conn.execute("ALTER TABLE messages ADD COLUMN ttl_seconds INTEGER")
         self._conn.commit()
 
     def wants_media(self, media_kind: str, size: Optional[int]) -> bool:
