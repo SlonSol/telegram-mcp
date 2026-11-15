@@ -401,6 +401,27 @@ class TelegramNotifier:
         content = "\n".join(lines).encode("utf-8")
         await self.send_document_bytes(filename, content, f"Транскрипт удалённых сообщений · {_esc(chat_title)}")
 
+        # Send all saved media files (voice notes, videos, photos, files) from the deleted batch
+        media_rows = [
+            r
+            for r in rows
+            if r.get("media_path")
+            and os.path.isfile(r.get("media_path"))
+            and (r.get("media_type") or "text") != "text"
+        ]
+        for mr in media_rows:
+            m_type = mr.get("media_type") or "document"
+            m_path = mr.get("media_path")
+            m_sender = mr.get("sender_name") or str(mr.get("sender_id") or "Неизвестно")
+            m_time = _format_time(mr.get("date"))
+            m_size = _format_bytes(mr.get("media_bytes"))
+            m_size_str = f" ({m_size})" if m_size else ""
+            m_text = mr.get("text") or ""
+            caption = f"<b>{_media_desc(m_type)}</b>{m_size_str} · {_esc(m_sender)} [{m_time}]"
+            if m_text:
+                caption += f"\n<blockquote>{_esc(m_text)}</blockquote>"
+            await self.send_media(m_type, m_path, caption[:_MAX_CAPTION_LEN])
+
     async def notify_ephemeral(
         self,
         snap: dict[str, Any],
