@@ -91,26 +91,26 @@ def _format_bytes(b: Any) -> str:
 
 def _peer_desc(peer_type: Optional[str]) -> str:
     mapping = {
-        "user": "👤 Личные сообщения (DM)",
-        "chat": "👥 Обычная группа",
-        "channel": "📢 Канал / Супергруппа",
+        "user": "Личные",
+        "chat": "Группа",
+        "channel": "Канал/Супергруппа",
     }
-    return mapping.get(str(peer_type or "").lower(), "💬 Чат")
+    return mapping.get(str(peer_type or "").lower(), "Чат")
 
 
 def _media_desc(kind: Optional[str]) -> str:
     mapping = {
-        "photo": "📸 Фотография",
-        "video": "🎥 Видеозапись",
-        "voice": "🎙 Голосовое сообщение",
-        "video_note": "📹 Кружочек (видеозаметка)",
-        "document": "📄 Документ / Файл",
-        "audio": "🎵 Аудиозапись",
-        "sticker": "🎭 Стикер",
-        "animation": "🎞 GIF / Анимация",
-        "text": "💬 Текст",
+        "photo": "Фото",
+        "video": "Видео",
+        "voice": "Голосовое",
+        "video_note": "Видеозаметка",
+        "document": "Документ",
+        "audio": "Аудио",
+        "sticker": "Стикер",
+        "animation": "GIF",
+        "text": "Текст",
     }
-    return mapping.get(str(kind or "text").lower(), f"📎 {kind or 'медиа'}")
+    return mapping.get(str(kind or "text").lower(), kind or "Медиа")
 
 
 def _chat_link(chat_id: Optional[int], message_id: Optional[int] = None) -> Optional[str]:
@@ -234,15 +234,15 @@ class TelegramNotifier:
 
         sender_name = snap.get("sender_name") or "Неизвестно"
         sender_id = snap.get("sender_id")
-        chat_title = snap.get("chat_title") or ("Личные сообщения" if snap.get("peer_type") == "user" else "Чат")
+        chat_title = snap.get("chat_title") or ("Личные" if snap.get("peer_type") == "user" else "Чат")
         chat_id = snap.get("chat_id")
         peer_type = snap.get("peer_type")
         message_id = snap.get("message_id")
         sent_time = _format_time(snap.get("date"))
-        edit_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        edit_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
         link = _chat_link(chat_id, message_id)
-        link_line = f'🔗 <b>Ссылка:</b> <a href="{link}">Перейти к сообщению</a>\n' if link else ""
+        link_html = f' [<a href="{link}">сообщение</a>]' if link else ""
 
         sender_mention = (
             f'<a href="tg://user?id={sender_id}">{_esc(sender_name)}</a>'
@@ -251,18 +251,12 @@ class TelegramNotifier:
         )
 
         text = (
-            f"✏️ <b>ОТРЕДАКТИРОВАНО СООБЩЕНИЕ</b>\n\n"
-            f"💬 <b>Чат:</b> <b>{_esc(chat_title)}</b>\n"
-            f"📁 <b>Тип:</b> {_peer_desc(peer_type)}\n"
-            f"🆔 <b>Chat ID:</b> <code>{chat_id}</code>\n"
-            f"{link_line}\n"
-            f"👤 <b>Автор:</b> {sender_mention}\n"
-            f"🆔 <b>User ID:</b> <code>{sender_id or '—'}</code>\n\n"
-            f"🕒 <b>Отправлено:</b> {sent_time}\n"
-            f"⏱ <b>Отредактировано:</b> {edit_time}\n\n"
-            f"📝 <b>Было:</b>\n"
-            f"<blockquote>{_esc(old_text or 'пусто')}</blockquote>\n\n"
-            f"📝 <b>Стало:</b>\n"
+            f"<b>ПРАВКА</b> · <b>{_esc(chat_title)}</b>{link_html}\n"
+            f"Чат: <code>{chat_id}</code> ({_peer_desc(peer_type)}) · Автор: {sender_mention} (id: <code>{sender_id or '—'}</code>)\n"
+            f"Время: {sent_time} ➔ {edit_time}\n\n"
+            f"<b>Было:</b>\n"
+            f"<blockquote>{_esc(old_text or 'пусто')}</blockquote>\n"
+            f"<b>Стало:</b>\n"
             f"<blockquote>{_esc(new_text or 'пусто')}</blockquote>"
         )
         await self.send_text(text)
@@ -273,43 +267,43 @@ class TelegramNotifier:
 
         sender_name = row.get("sender_name") or "Неизвестно"
         sender_id = row.get("sender_id")
-        chat_title = row.get("chat_title") or ("Личные сообщения" if row.get("peer_type") == "user" else "Чат")
+        chat_title = row.get("chat_title") or ("Личные" if row.get("peer_type") == "user" else "Чат")
         chat_id = row.get("chat_id")
         peer_type = row.get("peer_type")
         message_id = row.get("message_id")
         media_path = row.get("media_path")
         media_type = row.get("media_type") or "text"
         media_bytes = row.get("media_bytes") or 0
-        size_str = f"({_format_bytes(media_bytes)})" if media_bytes > 0 else ""
+        size_str = f" ({_format_bytes(media_bytes)})" if media_bytes > 0 else ""
 
         sent_time = _format_time(row.get("date"))
         del_iso = row.get("deleted_at") or datetime.now(timezone.utc).isoformat()
         del_time = _format_time(del_iso)
         lifetime = _time_diff(row.get("date"), del_iso)
-        lifetime_str = f" (прожило: {lifetime})" if lifetime else ""
+        lifetime_str = f" ({lifetime})" if lifetime else ""
 
-        eph_str = ""
+        meta_extra: list[str] = []
         if row.get("is_ephemeral"):
             ttl = row.get("ttl_seconds")
-            eph_str = f"\n⏳ <b>Исчезающее:</b> TTL {ttl}s" if ttl else "\n⏳ <b>Исчезающее:</b> View-Once"
+            meta_extra.append(f"TTL {ttl}s" if ttl else "View-Once")
 
-        fwd_str = ""
         fwd_raw = row.get("forward_json")
         if fwd_raw:
             try:
                 fwd_data = json.loads(fwd_raw) if isinstance(fwd_raw, str) else fwd_raw
                 from_n = fwd_data.get("from_name") or fwd_data.get("from_id")
                 if from_n:
-                    fwd_str = f"\n↪️ <b>Переслано от:</b> {_esc(from_n)}"
+                    meta_extra.append(f"переслано от {_esc(from_n)}")
             except Exception:
                 pass
 
-        reply_str = ""
         if row.get("reply_to_msg_id"):
-            reply_str = f"\n↩️ <b>В ответ на:</b> #{row.get('reply_to_msg_id')}"
+            meta_extra.append(f"в ответ на #{row.get('reply_to_msg_id')}")
+
+        extra_str = f" · {', '.join(meta_extra)}" if meta_extra else ""
 
         link = _chat_link(chat_id, message_id)
-        link_line = f'🔗 <b>Ссылка:</b> <a href="{link}">Перейти к месту в чате</a>\n' if link else ""
+        link_html = f' [<a href="{link}">перейти</a>]' if link else ""
 
         sender_mention = (
             f'<a href="tg://user?id={sender_id}">{_esc(sender_name)}</a>'
@@ -318,23 +312,15 @@ class TelegramNotifier:
         )
 
         body_text = row.get("text") or ""
-        body_block = f"\n\n📝 <b>Текст:</b>\n<blockquote>{_esc(body_text)}</blockquote>" if body_text else "\n\n<i>(без текстового описания)</i>"
+        body_block = f"\n\n<blockquote>{_esc(body_text)}</blockquote>" if body_text else "\n\n<i>(без текста)</i>"
 
         full_card = (
-            f"🗑 <b>УДАЛЕНО СООБЩЕНИЕ</b>\n\n"
-            f"💬 <b>Чат:</b> <b>{_esc(chat_title)}</b>\n"
-            f"📁 <b>Тип:</b> {_peer_desc(peer_type)}\n"
-            f"🆔 <b>Chat ID:</b> <code>{chat_id}</code>\n"
-            f"{link_line}\n"
-            f"👤 <b>Автор:</b> {sender_mention}\n"
-            f"🆔 <b>User ID:</b> <code>{sender_id or '—'}</code>\n\n"
-            f"🕒 <b>Отправлено:</b> {sent_time}\n"
-            f"⏱ <b>Удалено:</b> {del_time}{lifetime_str}\n"
-            f"📎 <b>Вложение:</b> {_media_desc(media_type)} {size_str}{eph_str}{fwd_str}{reply_str}"
+            f"<b>УДАЛЕНО</b> · <b>{_esc(chat_title)}</b>{link_html}\n"
+            f"Чат: <code>{chat_id}</code> ({_peer_desc(peer_type)}) · Автор: {sender_mention} (id: <code>{sender_id or '—'}</code>)\n"
+            f"Время: {sent_time} ➔ {del_time}{lifetime_str} · Вложение: {_media_desc(media_type)}{size_str}{extra_str}"
             f"{body_block}"
         )
 
-        # If media file exists, send with media
         if media_path and os.path.isfile(media_path) and media_type != "text":
             if len(full_card) <= _MAX_CAPTION_LEN:
                 sent = await self.send_media(media_type, media_path, full_card)
@@ -342,9 +328,8 @@ class TelegramNotifier:
                     return
             else:
                 compact_caption = (
-                    f"🗑 <b>УДАЛЕНО {_media_desc(media_type).upper()}</b>\n"
-                    f"💬 <b>{_esc(chat_title)}</b> · {_esc(sender_name)}\n"
-                    f"⏱ Удалено: {del_time} {size_str}"
+                    f"<b>УДАЛЕНО</b> · <b>{_esc(chat_title)}</b> · {_esc(sender_name)}\n"
+                    f"Время: {sent_time} ➔ {del_time}{lifetime_str} · {_media_desc(media_type)}{size_str}"
                 )
                 sent = await self.send_media(media_type, media_path, compact_caption)
                 if sent:
@@ -366,10 +351,9 @@ class TelegramNotifier:
         n = len(rows)
         first_row = rows[0]
         peer_type = first_row.get("peer_type")
-        chat_title = chat_name or first_row.get("chat_title") or ("Личные сообщения" if peer_type == "user" else "Чат")
+        chat_title = chat_name or first_row.get("chat_title") or ("Личные" if peer_type == "user" else "Чат")
         extra = f" (из {total_count} удалённых)" if total_count > n else ""
 
-        # Analyze authors
         authors: dict[str, int] = {}
         for r in rows:
             name = r.get("sender_name") or str(r.get("sender_id") or "Неизвестно")
@@ -377,38 +361,29 @@ class TelegramNotifier:
         top_authors = sorted(authors.items(), key=lambda x: x[1], reverse=True)[:4]
         authors_str = ", ".join(f"{_esc(k)} ({v})" for k, v in top_authors)
 
-        # Time range
         dates = [r.get("date") for r in rows if r.get("date")]
         dates.sort()
-        time_range = f"с {_format_time(dates[0])} по {_format_time(dates[-1])}" if dates else "—"
+        time_range = f"{_format_time(dates[0])} — {_format_time(dates[-1])}" if dates else "—"
 
         link = _chat_link(chat_id)
-        link_line = f'🔗 <b>Ссылка:</b> <a href="{link}">Перейти в чат</a>\n' if link else ""
+        link_html = f' [<a href="{link}">чат</a>]' if link else ""
 
         summary = (
-            f"🗑 <b>МАССОВОЕ УДАЛЕНИЕ СООБЩЕНИЙ</b>\n\n"
-            f"💬 <b>Чат:</b> <b>{_esc(chat_title)}</b>\n"
-            f"📁 <b>Тип:</b> {_peer_desc(peer_type)}\n"
-            f"🆔 <b>Chat ID:</b> <code>{chat_id}</code>\n"
-            f"{link_line}\n"
-            f"📊 <b>Удалено сообщений в архиве:</b> <b>{n}</b>{extra}\n"
-            f"👥 <b>Авторы:</b> {authors_str}\n"
-            f"🕒 <b>Период переписки:</b> {time_range}\n\n"
-            f"📎 <i>Полный текстовый транскрипт переписки сформирован и отправлен файлом ниже:</i>"
+            f"<b>МАССОВОЕ УДАЛЕНИЕ</b> · <b>{_esc(chat_title)}</b>{link_html}\n"
+            f"Чат: <code>{chat_id}</code> ({_peer_desc(peer_type)}) · Удалено: <b>{n}</b> сообщений{extra}\n"
+            f"Авторы: {authors_str}\n"
+            f"Период: {time_range}\n"
+            f"<i>Транскрипт прикреплён файлом ниже.</i>"
         )
         await self.send_text(summary)
 
-        # Build clean, rich .txt transcript
+        # Build clean .txt transcript without unicode decorations
         lines = [
-            "=" * 64,
-            "АРХИВ УДАЛЁННЫХ СООБЩЕНИЙ",
-            "=" * 64,
-            f"Чат: {chat_title}",
-            f"Тип чата: {_peer_desc(peer_type)}",
-            f"Chat ID: {chat_id}",
-            f"Сообщений в дампе: {n}",
-            f"Время создания дампа: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}",
-            "=" * 64,
+            "--- АРХИВ УДАЛЁННЫХ СООБЩЕНИЙ ---",
+            f"Чат: {chat_title} (ID: {chat_id}, {_peer_desc(peer_type)})",
+            f"Сообщений в архиве: {n}",
+            f"Время дампа: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}",
+            "---------------------------------",
             "",
         ]
         for r in rows:
@@ -420,11 +395,11 @@ class TelegramNotifier:
             msg_id = r.get("message_id")
             body = m_prefix + (r.get("text") or "")
             lines.append(f"[{timestamp}] [ID: {msg_id}] {sender}: {body}")
-        lines.append("\n" + "=" * 64 + "\n")
+        lines.append("\n---------------------------------\n")
 
         filename = f"deleted_{chat_id}_{int(datetime.now(timezone.utc).timestamp())}.txt"
         content = "\n".join(lines).encode("utf-8")
-        await self.send_document_bytes(filename, content, f"📄 Транскрипт удалённых сообщений · {_esc(chat_title)}")
+        await self.send_document_bytes(filename, content, f"Транскрипт удалённых сообщений · {_esc(chat_title)}")
 
     async def notify_ephemeral(
         self,
@@ -437,7 +412,7 @@ class TelegramNotifier:
 
         sender_name = snap.get("sender_name") or "Неизвестно"
         sender_id = snap.get("sender_id")
-        chat_title = snap.get("chat_title") or ("Личные сообщения" if snap.get("peer_type") == "user" else "Чат")
+        chat_title = snap.get("chat_title") or ("Личные" if snap.get("peer_type") == "user" else "Чат")
         chat_id = snap.get("chat_id")
         peer_type = snap.get("peer_type")
         message_id = snap.get("message_id")
@@ -445,7 +420,7 @@ class TelegramNotifier:
         sent_time = _format_time(snap.get("date"))
 
         link = _chat_link(chat_id, message_id)
-        link_line = f'🔗 <b>Ссылка:</b> <a href="{link}">Перейти к сообщению</a>\n' if link else ""
+        link_html = f' [<a href="{link}">перейти</a>]' if link else ""
 
         sender_mention = (
             f'<a href="tg://user?id={sender_id}">{_esc(sender_name)}</a>'
@@ -453,21 +428,14 @@ class TelegramNotifier:
             else _esc(sender_name)
         )
 
-        ttl_str = f"{ttl_seconds} сек" if ttl_seconds else "View-Once (1 просмотр)"
+        ttl_str = f"TTL {ttl_seconds}s" if ttl_seconds else "View-Once"
         body_text = snap.get("text") or ""
-        body_block = f"\n\n📝 <b>Подпись:</b>\n<blockquote>{_esc(body_text)}</blockquote>" if body_text else ""
+        body_block = f"\n\n<blockquote>{_esc(body_text)}</blockquote>" if body_text else ""
 
         full_card = (
-            f"🔥 <b>ПЕРЕХВАЧЕНО ИСЧЕЗАЮЩЕЕ МЕДИА</b>\n\n"
-            f"💬 <b>Чат:</b> <b>{_esc(chat_title)}</b>\n"
-            f"📁 <b>Тип:</b> {_peer_desc(peer_type)}\n"
-            f"🆔 <b>Chat ID:</b> <code>{chat_id}</code>\n"
-            f"{link_line}\n"
-            f"👤 <b>Автор:</b> {sender_mention}\n"
-            f"🆔 <b>User ID:</b> <code>{sender_id or '—'}</code>\n\n"
-            f"🕒 <b>Отправлено:</b> {sent_time}\n"
-            f"⏳ <b>Таймер самоуничтожения:</b> {ttl_str}\n"
-            f"📎 <b>Вложение:</b> {_media_desc(media_type)}"
+            f"<b>ИСЧЕЗАЮЩЕЕ МЕДИА ({ttl_str})</b> · <b>{_esc(chat_title)}</b>{link_html}\n"
+            f"Чат: <code>{chat_id}</code> ({_peer_desc(peer_type)}) · Автор: {sender_mention} (id: <code>{sender_id or '—'}</code>)\n"
+            f"Время: {sent_time} · Вложение: {_media_desc(media_type)}"
             f"{body_block}"
         )
 
@@ -478,8 +446,8 @@ class TelegramNotifier:
                     return
             else:
                 compact_caption = (
-                    f"🔥 <b>ИСЧЕЗАЮЩЕЕ МЕДИА ({ttl_str})</b>\n"
-                    f"💬 <b>{_esc(chat_title)}</b> · {_esc(sender_name)}"
+                    f"<b>ИСЧЕЗАЮЩЕЕ МЕДИА ({ttl_str})</b> · <b>{_esc(chat_title)}</b> · {_esc(sender_name)}\n"
+                    f"Время: {sent_time} · {_media_desc(media_type)}"
                 )
                 sent = await self.send_media(media_type, file_path, compact_caption)
                 if sent:
