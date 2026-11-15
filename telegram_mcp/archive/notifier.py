@@ -20,6 +20,14 @@ logger = logging.getLogger(__name__)
 
 _MAX_CAPTION_LEN = 1000
 _MAX_TEXT_LEN = 4000
+_DEFAULT_NOTIFY_MAX_MEDIA_BYTES = 3 * 1024 * 1024  # 3 MB limit for bot outbound media uploads
+
+
+def _max_notify_bytes() -> int:
+    raw = os.getenv("TELEGRAM_NOTIFY_MAX_BYTES", "").strip()
+    if raw.isdigit():
+        return int(raw)
+    return _DEFAULT_NOTIFY_MAX_MEDIA_BYTES
 
 
 def _bot_token() -> str:
@@ -282,6 +290,21 @@ class TelegramNotifier:
         lifetime = _time_diff(row.get("date"), del_iso)
         lifetime_str = f" ({lifetime})" if lifetime else ""
 
+        max_notify_bytes = _max_notify_bytes()
+        is_lightweight = media_type in ("photo", "voice", "video_note", "sticker")
+        can_upload = (
+            media_path
+            and os.path.isfile(media_path)
+            and media_type != "text"
+            and (is_lightweight or media_bytes <= max_notify_bytes)
+        )
+
+        size_label = _format_bytes(media_bytes)
+        if not can_upload and media_path and os.path.isfile(media_path) and media_type != "text":
+            size_str = f" ({size_label}, на сервере)" if size_label else " (на сервере)"
+        else:
+            size_str = f" ({size_label})" if size_label else ""
+
         meta_extra: list[str] = []
         if row.get("is_ephemeral"):
             ttl = row.get("ttl_seconds")
@@ -321,7 +344,7 @@ class TelegramNotifier:
             f"{body_block}"
         )
 
-        if media_path and os.path.isfile(media_path) and media_type != "text":
+        if can_upload:
             if len(full_card) <= _MAX_CAPTION_LEN:
                 sent = await self.send_media(media_type, media_path, full_card)
                 if sent:
@@ -402,6 +425,7 @@ class TelegramNotifier:
         await self.send_document_bytes(filename, content, f"Транскрипт удалённых сообщений · {_esc(chat_title)}")
 
         # Send all saved media files (voice notes, videos, photos, files) from the deleted batch
+        max_notify_bytes = _max_notify_bytes()
         media_rows = [
             r
             for r in rows
@@ -412,15 +436,28 @@ class TelegramNotifier:
         for mr in media_rows:
             m_type = mr.get("media_type") or "document"
             m_path = mr.get("media_path")
+            m_bytes = mr.get("media_bytes") or 0
             m_sender = mr.get("sender_name") or str(mr.get("sender_id") or "Неизвестно")
             m_time = _format_time(mr.get("date"))
-            m_size = _format_bytes(mr.get("media_bytes"))
-            m_size_str = f" ({m_size})" if m_size else ""
+            m_size = _format_bytes(m_bytes)
             m_text = mr.get("text") or ""
-            caption = f"<b>{_media_desc(m_type)}</b>{m_size_str} · {_esc(m_sender)} [{m_time}]"
-            if m_text:
-                caption += f"\n<blockquote>{_esc(m_text)}</blockquote>"
-            await self.send_media(m_type, m_path, caption[:_MAX_CAPTION_LEN])
+
+            is_lightweight = m_type in ("photo", "voice", "video_note", "sticker")
+            can_upload_item = is_lightweight or (m_bytes <= max_notify_bytes)
+
+            if can_upload_item:
+                m_size_str = f" ({m_size})" if m_size else ""
+                caption = f"<b>{_media_desc(m_type)}</b>{m_size_str} · {_esc(m_sender)} [{m_time}]"
+                if m_text:
+                    caption += f"\n<blockquote>{_esc(m_text)}</blockquote>"
+                await self.send_media(m_type, m_path, caption[:_MAX_CAPTION_LEN])
+            else:
+                heavy_note = (
+                    f"<b>{_media_desc(m_type)}</b> ({m_size}, на сервере) · {_esc(m_sender)} [{m_time}]"
+                )
+                if m_text:
+                    heavy_note += f"\n<blockquote>{_esc(m_text)}</blockquote>"
+                await self.send_text(heavy_note)
 
     async def notify_ephemeral(
         self,
@@ -460,7 +497,12 @@ class TelegramNotifier:
             f"{body_block}"
         )
 
-        if file_path and os.path.isfile(file_path):
+        max_notify_bytes = _max_notify_bytes()
+        file_bytes = os.path.getsize(file_path) if (file_path and os.path.isfile(file_path)) else 0
+        is_lightweight = media_type in ("photo", "voice", "video_note", "sticker")
+        can_upload_eph = file_path and os.path.isfile(file_path) and (is_lightweight or file_bytes <= max_notify_bytes)
+
+        if can_upload_eph:
             if len(full_card) <= _MAX_CAPTION_LEN:
                 sent = await self.send_media(media_type, file_path, full_card)
                 if sent:
